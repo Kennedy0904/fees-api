@@ -110,6 +110,8 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		return Invoice{}, err
 	}
 
+	var finalInvoice Invoice
+	closed := false
 	if err := workflow.SetUpdateHandler(ctx, CloseBillUpdateName, func(ctx workflow.Context, input CloseBillWorkflowInput) (Invoice, error) {
 		if state.Status == BillStatusClosed {
 			return invoiceFromBill(state), nil
@@ -118,14 +120,15 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		closedAt := input.ClosedAt.UTC()
 		state.Status = BillStatusClosed
 		state.ClosedAt = &closedAt
-		return invoiceFromBill(state), nil
+		finalInvoice = invoiceFromBill(state)
+		closed = true
+		return finalInvoice, nil
 	}); err != nil {
 		return Invoice{}, err
 	}
 
-	for {
-		if err := workflow.Sleep(ctx, 24*time.Hour); err != nil {
-			return invoiceFromBill(state), err
-		}
+	if err := workflow.Await(ctx, func() bool { return closed }); err != nil {
+		return Invoice{}, err
 	}
+	return finalInvoice, nil
 }

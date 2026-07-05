@@ -4,11 +4,20 @@ Go implementation of a fees billing API using Encore for the API layer and Tempo
 
 The main design choice is that each bill is represented by a long-running Temporal workflow. The workflow starts when the bill period begins, owns the open/closed state, accepts line-item updates while open, rejects late line items after close, and returns the final invoice summary.
 
-## Requirements
+## Prerequisites
 
 - Go 1.24 or newer
 - Encore CLI
 - Temporal CLI
+
+## Requirements Covered
+
+- Create new bill: `POST /bills` starts a Temporal workflow for the billing period.
+- Add line items: `POST /bills/{id}/line-items` accrues fees while the bill is open.
+- Close active bill: `POST /bills/{id}/close` returns the final invoice with all line items and totals.
+- State integrity: line-item additions after close are rejected with `failed_precondition`.
+- Multi-currency: amounts support `USD` and `GEL`, represented in minor units and totaled per currency.
+- Temporal workflow lifecycle: closing a bill completes the workflow, and `GET /bills/{id}/invoice` reads the completed workflow result.
 
 ## Run
 
@@ -43,12 +52,12 @@ The tests cover the domain service and the Temporal bill workflow state machine.
 
 ## API Example
 
-The multi-line `curl` examples use `\` for shell line continuation. The `\` must be the final character on the line, with no trailing space after it. If a request seems to hang or returns nothing, use the single-line form.
+The examples use regular `curl` output so connection errors are visible. Add `-v` to any command for more request/response detail while debugging.
 
 Create a bill and start its Temporal workflow:
 
 ```sh
-curl -s -X POST http://127.0.0.1:4000/bills \
+curl -X POST http://127.0.0.1:4000/bills \
   -H 'content-type: application/json' \
   -d '{
     "customer_id": "customer_123",
@@ -57,16 +66,10 @@ curl -s -X POST http://127.0.0.1:4000/bills \
   }'
 ```
 
-Single-line form:
-
-```sh
-curl -s -X POST http://127.0.0.1:4000/bills -H 'content-type: application/json' -d '{"customer_id":"customer_123","period_start":"2026-07-01T00:00:00Z","period_end":"2026-08-01T00:00:00Z"}'
-```
-
 Use the returned bill ID to add line items:
 
 ```sh
-curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   -H 'content-type: application/json' \
   -d '{
     "description": "account maintenance fee",
@@ -75,14 +78,8 @@ curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   }'
 ```
 
-Single-line form:
-
 ```sh
-curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items -H 'content-type: application/json' -d '{"description":"account maintenance fee","currency":"USD","amount_minor":1200}'
-```
-
-```sh
-curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   -H 'content-type: application/json' \
   -d '{
     "description": "card fee",
@@ -91,19 +88,65 @@ curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   }'
 ```
 
-Get the current bill state:
+Get the active bill state before closing:
 
 ```sh
-curl -s http://127.0.0.1:4000/bills/{bill_id}
+curl http://127.0.0.1:4000/bills/{bill_id}
 ```
 
-Close the bill and receive the invoice summary:
+Close the bill and receive the final invoice summary:
 
 ```sh
-curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/close
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/close
 ```
 
-After close, further line-item additions are rejected by the Temporal workflow.
+Fetch the finalized invoice after close:
+
+```sh
+curl http://127.0.0.1:4000/bills/{bill_id}/invoice
+```
+
+After close, the Temporal workflow completes and appears as completed in Temporal UI. Further line-item additions are rejected as closed-bill operations. Closed bills are not reopened; production correction flows should use explicit adjustments or credit/debit notes instead of mutating a finalized invoice.
+
+## Edge Case Examples
+
+Adding both `USD` and `GEL` to the same bill is allowed. The invoice keeps separate totals per currency instead of mixing exchange rates.
+
+Unsupported currencies are rejected:
+
+```sh
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
+  -H 'content-type: application/json' \
+  -d '{
+    "description": "unsupported currency fee",
+    "currency": "EUR",
+    "amount_minor": 100
+  }'
+```
+
+Non-positive amounts are rejected:
+
+```sh
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
+  -H 'content-type: application/json' \
+  -d '{
+    "description": "invalid amount fee",
+    "currency": "USD",
+    "amount_minor": 0
+  }'
+```
+
+Line items are rejected after the bill is closed:
+
+```sh
+curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
+  -H 'content-type: application/json' \
+  -d '{
+    "description": "late fee",
+    "currency": "USD",
+    "amount_minor": 100
+  }'
+```
 
 ## Architecture
 
@@ -113,7 +156,7 @@ After close, further line-item additions are rejected by the Temporal workflow.
 - `internal/fees/model.go` contains the financial data model.
 - `internal/fees/service.go` and `internal/fees/store.go` keep a small pure-Go domain service and in-memory store used by tests and as a contrast to the Temporal-backed API path.
 
-Temporal is used as the bill state machine. `POST /bills` starts the workflow, `POST /bills/{id}/line-items` sends a synchronous workflow update, `POST /bills/{id}/close` sends a close update and returns the final invoice, and `GET /bills/{id}` queries the workflow state.
+Temporal is used as the bill state machine. `POST /bills` starts the workflow, `POST /bills/{id}/line-items` sends a synchronous workflow update, `GET /bills/{id}` queries the active workflow state, `POST /bills/{id}/close` sends a close update, returns the final invoice, and completes the workflow, and `GET /bills/{id}/invoice` reads the completed workflow result.
 
 Using workflow updates instead of fire-and-forget signals lets the API return validation errors synchronously. This is important for financial state integrity because adding a line item to a closed bill must fail at the API boundary.
 

@@ -146,6 +146,20 @@ func CloseBill(ctx context.Context, id string) (*fees.Invoice, error) {
 	return &invoice, nil
 }
 
+//encore:api public method=GET path=/bills/:id/invoice
+func GetInvoice(ctx context.Context, id string) (*fees.Invoice, error) {
+	c, err := getTemporalClient()
+	if err != nil {
+		return nil, domainError(err)
+	}
+
+	var invoice fees.Invoice
+	if err := c.GetWorkflow(ctx, id, "").Get(ctx, &invoice); err != nil {
+		return nil, domainError(err)
+	}
+	return &invoice, nil
+}
+
 //encore:api public method=GET path=/bills/:id
 func GetBill(ctx context.Context, id string) (*fees.Bill, error) {
 	c, err := getTemporalClient()
@@ -178,6 +192,8 @@ func domainError(err error) error {
 		return apiError(errs.NotFound, err.Error())
 	case errors.Is(err, fees.ErrBillClosed), strings.Contains(err.Error(), fees.ErrBillClosed.Error()):
 		return apiError(errs.FailedPrecondition, err.Error())
+	case strings.Contains(err.Error(), "workflow execution already completed"):
+		return apiError(errs.FailedPrecondition, fees.ErrBillClosed.Error())
 	case errors.Is(err, fees.ErrInvalidInput), strings.Contains(err.Error(), fees.ErrInvalidInput.Error()):
 		return apiError(errs.InvalidArgument, err.Error())
 	default:
