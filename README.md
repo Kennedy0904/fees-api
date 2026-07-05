@@ -1,6 +1,6 @@
-# Pave Bank Fees API
+# Fees API
 
-Go implementation of the Pave Bank fees challenge using Encore for the API layer and Temporal for the bill lifecycle workflow.
+Go implementation of a fees billing API using Encore for the API layer and Temporal for the bill lifecycle workflow.
 
 The main design choice is that each bill is represented by a long-running Temporal workflow. The workflow starts when the bill period begins, owns the open/closed state, accepts line-item updates while open, rejects late line items after close, and returns the final invoice summary.
 
@@ -114,6 +114,6 @@ Using workflow updates instead of fire-and-forget signals lets the API return va
 
 ## Tradeoffs
 
-For this challenge, Temporal workflow history is the source of truth for bill lifecycle state. That keeps the required Encore + Temporal flow focused and avoids requiring Postgres/Docker setup for reviewers.
+For this implementation, Temporal workflow history is the source of truth for bill lifecycle state. That keeps the required Encore + Temporal flow focused and avoids requiring Postgres/Docker setup for reviewers.
 
 In production, I would usually add a database-backed read model for listing/searching bills, reporting across many bills, and operational recovery workflows. The write-side state transition rules would still fit well in Temporal.

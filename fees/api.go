@@ -9,7 +9,7 @@ import (
 
 	"encore.dev/beta/errs"
 
-	"pave-bank/internal/fees"
+	"fees-api/internal/fees"
 
 	"go.temporal.io/sdk/client"
 )

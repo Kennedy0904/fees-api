@@ -1,4 +1,4 @@
-module pave-bank
+module fees-api
 
 go 1.24.0
 

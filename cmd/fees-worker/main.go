@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"pave-bank/internal/fees"
+	"fees-api/internal/fees"
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
