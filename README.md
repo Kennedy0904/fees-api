@@ -39,7 +39,21 @@ Start the Encore API in another terminal:
 encore run
 ```
 
-Encore listens on `http://127.0.0.1:4000` by default and prints a local dashboard URL.
+## Local URLs
+
+- Fees API: `http://127.0.0.1:4000`
+- Temporal UI: `http://localhost:8233`
+- Encore local dashboard: printed by `encore run`, usually `http://127.0.0.1:9400/...`
+
+In Temporal UI, open the `default` namespace and look for `BillWorkflow`. Open bills show as running workflows. After calling `POST /bills/{id}/close`, the workflow should move to completed and its result contains the final invoice.
+
+You can also verify the workflow from the CLI:
+
+```sh
+temporal workflow describe --workflow-id {bill_id}
+```
+
+After close, the expected workflow status is `COMPLETED`.
 
 ## Test
 
@@ -98,6 +112,48 @@ Close the bill and receive the final invoice summary:
 
 ```sh
 curl -X POST http://127.0.0.1:4000/bills/{bill_id}/close
+```
+
+Example invoice response:
+
+```json
+{
+  "bill_id": "bill_123",
+  "status": "closed",
+  "totals": [
+    {
+      "currency": "GEL",
+      "minor": 900
+    },
+    {
+      "currency": "USD",
+      "minor": 1200
+    }
+  ],
+  "line_items": [
+    {
+      "id": "line_123",
+      "bill_id": "bill_123",
+      "description": "account maintenance fee",
+      "amount": {
+        "currency": "USD",
+        "minor": 1200
+      },
+      "created_at": "2026-07-01T00:00:00Z"
+    },
+    {
+      "id": "line_456",
+      "bill_id": "bill_123",
+      "description": "card fee",
+      "amount": {
+        "currency": "GEL",
+        "minor": 900
+      },
+      "created_at": "2026-07-01T00:00:00Z"
+    }
+  ],
+  "closed_at": "2026-08-01T00:00:00Z"
+}
 ```
 
 Fetch the finalized invoice after close:
