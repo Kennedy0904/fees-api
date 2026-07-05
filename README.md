@@ -43,6 +43,8 @@ The tests cover the domain service and the Temporal bill workflow state machine.
 
 ## API Example
 
+The multi-line `curl` examples use `\` for shell line continuation. The `\` must be the final character on the line, with no trailing space after it. If a request seems to hang or returns nothing, use the single-line form.
+
 Create a bill and start its Temporal workflow:
 
 ```sh
@@ -55,6 +57,12 @@ curl -s -X POST http://127.0.0.1:4000/bills \
   }'
 ```
 
+Single-line form:
+
+```sh
+curl -s -X POST http://127.0.0.1:4000/bills -H 'content-type: application/json' -d '{"customer_id":"customer_123","period_start":"2026-07-01T00:00:00Z","period_end":"2026-08-01T00:00:00Z"}'
+```
+
 Use the returned bill ID to add line items:
 
 ```sh
@@ -65,6 +73,12 @@ curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
     "currency": "USD",
     "amount_minor": 1200
   }'
+```
+
+Single-line form:
+
+```sh
+curl -s -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items -H 'content-type: application/json' -d '{"description":"account maintenance fee","currency":"USD","amount_minor":1200}'
 ```
 
 ```sh
