@@ -139,6 +139,9 @@ func AddLineItem(ctx context.Context, id string, req *AddLineItemRequest) (*fees
 		WaitForStage: client.WorkflowUpdateStageCompleted,
 	})
 	if err != nil {
+		if completedWorkflowExists(ctx, c, id) {
+			return nil, domainError(fees.ErrBillClosed)
+		}
 		return nil, domainError(err)
 	}
 
@@ -272,6 +275,11 @@ func getCompletedInvoice(ctx context.Context, c client.Client, id string) (*fees
 		return nil, domainError(err)
 	}
 	return &invoice, nil
+}
+
+func completedWorkflowExists(ctx context.Context, c client.Client, id string) bool {
+	var invoice fees.Invoice
+	return c.GetWorkflow(ctx, id, "").Get(ctx, &invoice) == nil
 }
 
 func getExistingBillForIdempotency(ctx context.Context, c client.Client, billID string, req *CreateBillRequest, periodStart time.Time, periodEnd time.Time) (*fees.Bill, error) {
