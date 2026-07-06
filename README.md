@@ -76,7 +76,8 @@ curl -X POST http://127.0.0.1:4000/bills \
   -d '{
     "customer_id": "customer_123",
     "period_start": "2026-07-01T00:00:00Z",
-    "period_end": "2026-08-01T00:00:00Z"
+    "period_end": "2026-08-01T00:00:00Z",
+    "idempotency_key": "create-bill-customer-123-2026-07"
   }'
 ```
 
@@ -88,7 +89,8 @@ curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   -d '{
     "description": "account maintenance fee",
     "currency": "USD",
-    "amount_minor": 1200
+    "amount_minor": 1200,
+    "idempotency_key": "line-item-account-fee-2026-07"
   }'
 ```
 
@@ -98,7 +100,8 @@ curl -X POST http://127.0.0.1:4000/bills/{bill_id}/line-items \
   -d '{
     "description": "card fee",
     "currency": "GEL",
-    "amount_minor": 900
+    "amount_minor": 900,
+    "idempotency_key": "line-item-card-fee-2026-07"
   }'
 ```
 
@@ -216,11 +219,14 @@ Temporal is used as the bill state machine. `POST /bills` starts the workflow, `
 
 Using workflow updates instead of fire-and-forget signals lets the API return validation errors synchronously. This is important for financial state integrity because adding a line item to a closed bill must fail at the API boundary.
 
+`idempotency_key` is optional on create-bill and add-line-item requests. When provided, it is used to derive stable Temporal workflow/update IDs so a client retry does not create a duplicate bill or append the same fee twice. A production system would also persist request fingerprints and original responses in a database, as described below.
+
 ## Money And State
 
 - Money is represented in minor units with `int64`, not floating point values.
 - Supported currencies are `USD` and `GEL`.
 - Invoice totals are grouped by currency.
+- Invoice total calculation rejects `int64` overflow instead of wrapping.
 - Bills move from `open` to `closed`.
 - Closing is idempotent.
 - Closed bills reject new line items.
@@ -241,10 +247,10 @@ Persistence and query model:
 
 Idempotent request handling:
 
-- Add an `Idempotency-Key` header, or an explicit `idempotency_key` request field, for mutating APIs such as create bill and add line item.
+- The current implementation accepts an explicit `idempotency_key` request field for create bill and add line item. It uses the key to derive stable Temporal workflow/update IDs, which protects against duplicate operations during client retries.
 - Store records in an `idempotency_keys` table with scope, key, request fingerprint, status, response body or resource ID, and timestamps. A useful scope would be `customer_id + endpoint + key`, so different customers can safely use the same key value.
 - On request start, insert the idempotency record inside a transaction. If insert succeeds, process the request. If the key already exists, compare the request fingerprint: same fingerprint returns the original result, different fingerprint returns a conflict.
-- Use database unique constraints and Temporal IDs together. For example, create-bill can use the idempotency record to return the original bill ID, while add-line-item can store the resulting line item ID and avoid appending the same fee twice.
+- Use database unique constraints and Temporal IDs together. For example, create-bill can use the idempotency record to return the original bill ID and response, while add-line-item can store the resulting line item ID and avoid appending the same fee twice.
 - Mark in-progress idempotency records carefully. If the API crashes after starting a Temporal workflow but before storing the final response, a retry should look up the workflow/resource by the stored operation reference and complete the response instead of creating a second operation.
 
 Security and access control:

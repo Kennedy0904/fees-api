@@ -41,7 +41,8 @@ func (input BillWorkflowInput) Validate() error {
 }
 
 type AddLineItemWorkflowInput struct {
-	Item LineItem
+	Item           LineItem
+	IdempotencyKey string
 }
 
 func (input AddLineItemWorkflowInput) Validate() error {
@@ -75,6 +76,7 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		LineItems:   []LineItem{},
 		CreatedAt:   input.CreatedAt.UTC(),
 	}
+	lineItemsByKey := make(map[string]LineItem)
 
 	if err := workflow.SetQueryHandler(ctx, GetBillQueryName, func() (Bill, error) {
 		return cloneBill(state), nil
@@ -86,7 +88,7 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		if state.Status != BillStatusClosed {
 			return Invoice{}, ErrBillOpen
 		}
-		return invoiceFromBill(state), nil
+		return invoiceFromBill(state)
 	}); err != nil {
 		return Invoice{}, err
 	}
@@ -98,6 +100,15 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		if input.Item.BillID != state.ID {
 			return LineItem{}, ErrNotFound
 		}
+		if input.IdempotencyKey != "" {
+			existing, ok := lineItemsByKey[input.IdempotencyKey]
+			if ok {
+				if !sameLineItemOperation(existing, input.Item) {
+					return LineItem{}, fmt.Errorf("%w: idempotency_key was already used with different line item details", ErrInvalidInput)
+				}
+				return existing, nil
+			}
+		}
 		if state.Status == BillStatusClosed {
 			return LineItem{}, ErrBillClosed
 		}
@@ -105,6 +116,9 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		item := input.Item
 		item.CreatedAt = item.CreatedAt.UTC()
 		state.LineItems = append(state.LineItems, item)
+		if input.IdempotencyKey != "" {
+			lineItemsByKey[input.IdempotencyKey] = item
+		}
 		return item, nil
 	}); err != nil {
 		return Invoice{}, err
@@ -114,13 +128,17 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 	closed := false
 	if err := workflow.SetUpdateHandler(ctx, CloseBillUpdateName, func(ctx workflow.Context, input CloseBillWorkflowInput) (Invoice, error) {
 		if state.Status == BillStatusClosed {
-			return invoiceFromBill(state), nil
+			return invoiceFromBill(state)
 		}
 
 		closedAt := input.ClosedAt.UTC()
 		state.Status = BillStatusClosed
 		state.ClosedAt = &closedAt
-		finalInvoice = invoiceFromBill(state)
+		invoice, err := invoiceFromBill(state)
+		if err != nil {
+			return Invoice{}, err
+		}
+		finalInvoice = invoice
 		closed = true
 		return finalInvoice, nil
 	}); err != nil {
@@ -131,4 +149,10 @@ func BillWorkflow(ctx workflow.Context, input BillWorkflowInput) (Invoice, error
 		return Invoice{}, err
 	}
 	return finalInvoice, nil
+}
+
+func sameLineItemOperation(existing LineItem, retry LineItem) bool {
+	return existing.BillID == retry.BillID &&
+		existing.Description == retry.Description &&
+		existing.Amount == retry.Amount
 }

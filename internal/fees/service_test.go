@@ -3,6 +3,7 @@ package fees
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -176,6 +177,34 @@ func TestCloseBillIsIdempotent(t *testing.T) {
 
 	if !first.ClosedAt.Equal(second.ClosedAt) {
 		t.Fatalf("expected close time to stay unchanged, first=%s second=%s", first.ClosedAt, second.ClosedAt)
+	}
+}
+
+func TestCloseBillRejectsOverflowingTotals(t *testing.T) {
+	service := NewService(NewStore())
+	bill, err := service.CreateBill(context.Background(), CreateBillInput{
+		CustomerID:  "customer_123",
+		PeriodStart: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		PeriodEnd:   time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		_, err = service.AddLineItem(context.Background(), AddLineItemInput{
+			BillID:      bill.ID,
+			Description: "large fee",
+			Money:       Money{Currency: CurrencyUSD, Minor: math.MaxInt64},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err = service.CloseBill(context.Background(), bill.ID)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for overflowing totals, got %v", err)
 	}
 }
 

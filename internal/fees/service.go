@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 )
@@ -100,7 +101,7 @@ func (s *Service) CloseBill(ctx context.Context, billID string) (Invoice, error)
 		return Invoice{}, err
 	}
 
-	return invoiceFromBill(bill), nil
+	return invoiceFromBill(bill)
 }
 
 func (s *Service) GetBill(ctx context.Context, billID string) (Bill, error) {
@@ -120,10 +121,14 @@ func validateMoney(money Money) error {
 	return nil
 }
 
-func invoiceFromBill(bill Bill) Invoice {
+func invoiceFromBill(bill Bill) (Invoice, error) {
 	totalsByCurrency := make(map[Currency]int64)
 	for _, item := range bill.LineItems {
-		totalsByCurrency[item.Amount.Currency] += item.Amount.Minor
+		current := totalsByCurrency[item.Amount.Currency]
+		if item.Amount.Minor > math.MaxInt64-current {
+			return Invoice{}, fmt.Errorf("%w: invoice total overflows int64", ErrInvalidInput)
+		}
+		totalsByCurrency[item.Amount.Currency] = current + item.Amount.Minor
 	}
 
 	totals := make([]Money, 0, len(totalsByCurrency))
@@ -145,7 +150,7 @@ func invoiceFromBill(bill Bill) Invoice {
 		Totals:    totals,
 		LineItems: bill.LineItems,
 		ClosedAt:  closedAt,
-	}
+	}, nil
 }
 
 func cmpString(a, b string) int {
