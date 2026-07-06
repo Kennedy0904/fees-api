@@ -230,3 +230,38 @@ Using workflow updates instead of fire-and-forget signals lets the API return va
 For this implementation, Temporal workflow history is the source of truth for bill lifecycle state. That keeps the required Encore + Temporal flow focused and avoids requiring Postgres/Docker setup for reviewers.
 
 In production, I would usually add a database-backed read model for listing/searching bills, reporting across many bills, and operational recovery workflows. The write-side state transition rules would still fit well in Temporal.
+
+## Future Improvements
+
+Persistence and query model:
+
+- Add Postgres as a read model while keeping Temporal as the write-side state machine. The workflow would still decide whether a bill is open or closed, but activities would persist bill snapshots, line items, and finalized invoices into tables such as `bills`, `line_items`, `invoices`, and `invoice_totals`.
+- Add unique constraints around financial identifiers: `bills.id`, `line_items.id`, `invoices.bill_id`, and idempotency keys. That gives the database a second layer of protection against duplicate writes if clients or workers retry.
+- Use Postgres for read-heavy endpoints like `GET /bills`, `GET /invoices`, customer billing history, reporting, and dashboards. This avoids scanning Temporal history for operational queries.
+
+Idempotent request handling:
+
+- Add an `Idempotency-Key` header, or an explicit `idempotency_key` request field, for mutating APIs such as create bill and add line item.
+- Store records in an `idempotency_keys` table with scope, key, request fingerprint, status, response body or resource ID, and timestamps. A useful scope would be `customer_id + endpoint + key`, so different customers can safely use the same key value.
+- On request start, insert the idempotency record inside a transaction. If insert succeeds, process the request. If the key already exists, compare the request fingerprint: same fingerprint returns the original result, different fingerprint returns a conflict.
+- Use database unique constraints and Temporal IDs together. For example, create-bill can use the idempotency record to return the original bill ID, while add-line-item can store the resulting line item ID and avoid appending the same fee twice.
+- Mark in-progress idempotency records carefully. If the API crashes after starting a Temporal workflow but before storing the final response, a retry should look up the workflow/resource by the stored operation reference and complete the response instead of creating a second operation.
+
+Security and access control:
+
+- Add an Encore auth handler to validate bearer tokens or service credentials and place the caller identity into request context.
+- Add ownership checks before bill reads or mutations. For example, a customer caller can only access bills belonging to its customer ID, while an internal service caller may need a narrower service permission such as `fees:write` or `fees:read`.
+- Store customer/account ownership in the database read model so authorization does not depend on querying a completed Temporal workflow.
+
+Financial integrity:
+
+- Add FX support only if a single reporting currency is required. That would need a rate table containing source, currency pair, rate, effective timestamp, and rounding mode. Invoice generation should record the exact rate used so later rate changes do not rewrite history.
+- Add explicit adjustment, credit-note, or debit-note workflows for corrections instead of reopening finalized invoices. This keeps the original invoice immutable and creates an auditable correction trail.
+- Add stronger validation rules as the domain grows, such as line-item category validation, maximum amount controls, and period-bound checks to reject fees outside the bill period.
+
+Operations:
+
+- Add Temporal search attributes such as customer ID, bill status, currency, and period end so operators can filter workflows in Temporal UI without opening each workflow manually.
+- Add reconciliation jobs that compare finalized workflow invoices against the database read model and any downstream ledger/accounting entries. Differences should produce alerts or a repair workflow rather than silent drift.
+- Add metrics and alerts for failed workflow updates, rejected line items, invoice close failures, and retry volume. These are the signals that usually reveal distributed-system or integration problems.
+- Add workflow archival and retention planning. Completed workflows should remain inspectable long enough for audits, while finalized invoices should live in durable storage beyond Temporal retention.
