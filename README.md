@@ -219,7 +219,7 @@ Temporal is used as the bill state machine. `POST /bills` starts the workflow, `
 
 Using workflow updates instead of fire-and-forget signals lets the API return validation errors synchronously. This is important for financial state integrity because adding a line item to a closed bill must fail at the API boundary.
 
-`idempotency_key` is optional on create-bill and add-line-item requests. When provided, it is used to derive stable Temporal workflow/update IDs so a client retry does not create a duplicate bill or append the same fee twice. A production system would also persist request fingerprints and original responses in a database, as described below.
+`idempotency_key` is optional on create-bill and add-line-item requests. When provided, create-bill keys are scoped by customer and derive stable Temporal workflow IDs. Add-line-item keys are tracked by the open workflow so a retry does not append the same fee twice. After a bill closes, new line-item attempts are still rejected; replaying the original line-item response after workflow completion would require a durable idempotency/result store, as described below.
 
 ## Money And State
 
@@ -247,7 +247,7 @@ Persistence and query model:
 
 Idempotent request handling:
 
-- The current implementation accepts an explicit `idempotency_key` request field for create bill and add line item. It uses the key to derive stable Temporal workflow/update IDs, which protects against duplicate operations during client retries.
+- The current implementation accepts an explicit `idempotency_key` request field for create bill and add line item. It uses customer-scoped keys for bill creation and workflow-tracked keys for line items, which protects against duplicate operations during common client retries.
 - Store records in an `idempotency_keys` table with scope, key, request fingerprint, status, response body or resource ID, and timestamps. A useful scope would be `customer_id + endpoint + key`, so different customers can safely use the same key value.
 - On request start, insert the idempotency record inside a transaction. If insert succeeds, process the request. If the key already exists, compare the request fingerprint: same fingerprint returns the original result, different fingerprint returns a conflict.
 - Use database unique constraints and Temporal IDs together. For example, create-bill can use the idempotency record to return the original bill ID and response, while add-line-item can store the resulting line item ID and avoid appending the same fee twice.

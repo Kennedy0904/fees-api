@@ -42,6 +42,15 @@ func TestDeterministicResourceID(t *testing.T) {
 	}
 }
 
+func TestCreateBillIdempotencyIDIsCustomerScoped(t *testing.T) {
+	firstCustomer := deterministicResourceID("bill", "customer_123:2026-07")
+	secondCustomer := deterministicResourceID("bill", "customer_456:2026-07")
+
+	if firstCustomer == secondCustomer {
+		t.Fatalf("expected different customers to have different deterministic bill ids, got %s", firstCustomer)
+	}
+}
+
 func TestDomainErrorMapsTemporalNotFound(t *testing.T) {
 	err := domainError(serviceerror.NewNotFound("workflow not found"))
 
@@ -51,5 +60,14 @@ func TestDomainErrorMapsTemporalNotFound(t *testing.T) {
 	}
 	if apiErr.Code != errs.NotFound {
 		t.Fatalf("expected not_found, got %s", apiErr.Code)
+	}
+}
+
+func TestIsWorkflowCompleted(t *testing.T) {
+	if !isWorkflowCompleted(errors.New("workflow execution already completed")) {
+		t.Fatal("expected completed workflow error to be detected")
+	}
+	if isWorkflowCompleted(errors.New("workflow not found")) {
+		t.Fatal("did not expect unrelated error to be detected as completed workflow")
 	}
 }

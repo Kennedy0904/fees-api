@@ -51,7 +51,7 @@ func CreateBill(ctx context.Context, req *CreateBillRequest) (*fees.Bill, error)
 
 	billID := fees.NewBillID()
 	if idempotencyKey != "" {
-		billID = deterministicResourceID("bill", idempotencyKey)
+		billID = deterministicResourceID("bill", req.CustomerID+":"+idempotencyKey)
 	}
 	now := time.Now().UTC()
 	input := fees.BillWorkflowInput{
@@ -164,6 +164,9 @@ func CloseBill(ctx context.Context, id string) (*fees.Invoice, error) {
 		WaitForStage: client.WorkflowUpdateStageCompleted,
 	})
 	if err != nil {
+		if isWorkflowCompleted(err) {
+			return getCompletedInvoice(ctx, c, id)
+		}
 		return nil, domainError(err)
 	}
 
@@ -193,11 +196,7 @@ func GetInvoice(ctx context.Context, id string) (*fees.Invoice, error) {
 		return nil, domainError(err)
 	}
 
-	var invoice fees.Invoice
-	if err := c.GetWorkflow(ctx, id, "").Get(ctx, &invoice); err != nil {
-		return nil, domainError(err)
-	}
-	return &invoice, nil
+	return getCompletedInvoice(ctx, c, id)
 }
 
 //encore:api public method=GET path=/bills/:id
@@ -261,6 +260,18 @@ func isTemporalAlreadyStarted(err error) bool {
 
 func isBillOpenError(err error) bool {
 	return errors.Is(err, fees.ErrBillOpen) || strings.Contains(err.Error(), fees.ErrBillOpen.Error())
+}
+
+func isWorkflowCompleted(err error) bool {
+	return strings.Contains(err.Error(), "workflow execution already completed")
+}
+
+func getCompletedInvoice(ctx context.Context, c client.Client, id string) (*fees.Invoice, error) {
+	var invoice fees.Invoice
+	if err := c.GetWorkflow(ctx, id, "").Get(ctx, &invoice); err != nil {
+		return nil, domainError(err)
+	}
+	return &invoice, nil
 }
 
 func getExistingBillForIdempotency(ctx context.Context, c client.Client, billID string, req *CreateBillRequest, periodStart time.Time, periodEnd time.Time) (*fees.Bill, error) {
