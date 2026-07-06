@@ -33,6 +33,8 @@ Start the worker in another terminal:
 go run ./cmd/fees-worker
 ```
 
+The worker must be running for workflow updates such as add line item and close bill to complete. Temporal and Encore can be running, but without the worker those operations cannot be processed.
+
 Start the Encore API in another terminal:
 
 ```sh
@@ -63,6 +65,18 @@ go vet ./...
 ```
 
 The tests cover the domain service and the Temporal bill workflow state machine.
+
+## API Reference
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/bills` | Create a bill and start workflow |
+| POST | `/bills/{id}/line-items` | Add a fee while bill is open |
+| GET | `/bills/{id}` | Read active bill state |
+| POST | `/bills/{id}/close` | Close bill and return invoice |
+| GET | `/bills/{id}/invoice` | Read finalized invoice |
+
+`GET /bills/{id}` is intended for active/open bill state. After close, use `GET /bills/{id}/invoice` to read the finalized invoice.
 
 ## API Example
 
@@ -166,6 +180,15 @@ curl http://127.0.0.1:4000/bills/{bill_id}/invoice
 ```
 
 After close, the Temporal workflow completes and appears as completed in Temporal UI. Further line-item additions are rejected as closed-bill operations. Closed bills are not reopened; production correction flows should use explicit adjustments or credit/debit notes instead of mutating a finalized invoice.
+
+## Expected Errors
+
+| Scenario | Error code |
+| --- | --- |
+| Invalid currency or non-positive amount | `invalid_argument` |
+| Add line item after close | `failed_precondition` |
+| Fetch invoice while bill is still open | `failed_precondition` |
+| Missing bill/workflow ID | `not_found` |
 
 ## Edge Case Examples
 
